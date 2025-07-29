@@ -1,0 +1,80 @@
+services:
+  # Banco de Dados PostgreSQL
+  db:
+    image: postgres:17.5-alpine
+    container_name: zapsign_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: django_db
+      POSTGRES_USER: django_user
+      POSTGRES_PASSWORD: django_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - zapsign_network
+
+  # PgAdmin para gerenciar o banco
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: zapsign_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_LISTEN_PORT: 80
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - db
+    networks:
+      - zapsign_network
+
+  # Django API Backend
+  django-api:
+    build:
+      context: ./django-docker-api
+      dockerfile: Dockerfile
+    container_name: zapsign_django_api
+    restart: always
+    command: ["./wait-for-db.sh"]
+    volumes:
+      - ./django-docker-api:/app
+    ports:
+      - "8001:8000"
+    env_file:
+      - ./django-docker-api/.env
+    depends_on:
+      - db
+    networks:
+      - zapsign_network
+
+  # Angular Frontend
+  angular-frontend:
+    build:
+      context: ./angular-docker-frontend
+      dockerfile: Dockerfile
+    container_name: zapsign_angular_frontend
+    restart: always
+    ports:
+      - "4200:4200"
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ./angular-docker-frontend:/app
+      - /app/node_modules
+    depends_on:
+      - django-api
+    networks:
+      - zapsign_network
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+
+networks:
+  zapsign_network:
+    driver: bridge

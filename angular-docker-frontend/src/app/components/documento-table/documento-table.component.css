@@ -1,0 +1,52 @@
+.table-container {
+  position: relative;
+}
+
+.signers-list {
+  max-width: 250px;
+}
+
+.signer-item {
+  border-left: 3px solid #e9ecef;
+  padding-left: 8px;
+}
+
+.badge-sm {
+  font-size: 0.7rem;
+}
+
+.table td {
+  vertical-align: middle;
+}
+
+/* Cores para status */
+.bg-warning {
+  background-color: #ffc107 !important;
+  color: #000;
+}
+
+.bg-success {
+  background-color: #198754 !important;
+  color: #fff;
+}
+
+.bg-danger {
+  background-color: #dc3545 !important;
+  color: #fff;
+}
+
+.bg-info {
+  background-color: #0dcaf0 !important;
+  color: #000;
+}
+
+/* Loading state */
+.spinner-border-sm {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* Empty state */
+.text-muted {
+  color: #6c757d !important;
+}

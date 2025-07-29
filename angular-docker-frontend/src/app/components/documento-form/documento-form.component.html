@@ -1,0 +1,56 @@
+<div class="shadow-sm rounded bg-white p-4 mb-4">
+  <form [formGroup]="documentoForm" (ngSubmit)="save()">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label" for="name">Name</label>
+        <input
+          formControlName="name"
+          type="text"
+          id="name"
+          class="form-control"
+        />
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="url_documento">URL do Documento</label>
+        <input
+          formControlName="url_documento"
+          type="text"
+          id="url_documento"
+          class="form-control"
+        />
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="nome_signatario"
+          >Nome do Signatário</label
+        >
+        <input
+          formControlName="nome_signatario"
+          type="text"
+          id="nome_signatario"
+          class="form-control"
+        />
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="email_signatario"
+          >Email do Signatário</label
+        >
+        <input
+          formControlName="email_signatario"
+          type="email"
+          id="email_signatario"
+          class="form-control"
+        />
+      </div>
+      <div class="col-md-12">
+        <button type="submit" class="btn btn-primary me-4">
+          {{
+            selectedDocumento ? "Salvar Alterações" : "Adicionar Documento"
+          }}
+        </button>
+        <button type="button" class="btn btn-secondary" (click)="clearForm()">
+          Limpar
+        </button>
+      </div>
+    </div>
+  </form>
+</div>

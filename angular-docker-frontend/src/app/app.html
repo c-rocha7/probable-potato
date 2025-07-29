@@ -1,0 +1,14 @@
+<div class="container mt-4">
+  <h2>Documentos</h2>
+
+  <app-documento-form
+    [selectedDocumento]="selectedDocumento"
+    (documentoSaved)="onDocumentoSaved()"
+    (formCleared)="onFormCleared()">
+  </app-documento-form>
+
+  <app-documento-table
+    (editDocumento)="onEditDocumento($event)"
+    (deleteDocumento)="onDeleteDocumento($event)">
+  </app-documento-table>
+</div>

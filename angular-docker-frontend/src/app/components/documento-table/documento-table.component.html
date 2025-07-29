@@ -1,0 +1,94 @@
+<div class="table-container">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Lista de Documentos</h4>
+    <button
+      class="btn btn-outline-primary btn-sm"
+      (click)="onRefresh()"
+      [disabled]="documentoStore.loading()">
+      @if (documentoStore.loading()) {
+        <span class="spinner-border spinner-border-sm me-1"></span>
+      }
+      Atualizar
+    </button>
+  </div>
+
+  @if (documentoStore.loading()) {
+    <div class="text-center p-4">
+      <div class="spinner-border" role="status">
+        <span class="visually-hidden">Carregando...</span>
+      </div>
+      <p class="mt-2">Carregando documentos...</p>
+    </div>
+  } @else {
+    <table class="table table-hover table-bordered shadow-sm rounded">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Open ID</th>
+          <th>Token</th>
+          <th>Nome</th>
+          <th>Status</th>
+          <th>Criado em</th>
+          <th>Signatários</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        @if (documentoStore.documentos().length === 0) {
+          <tr>
+            <td colspan="8" class="text-center p-4">
+              <p class="mb-0 text-muted">Nenhum documento encontrado</p>
+            </td>
+          </tr>
+        } @else {
+          @for (documento of documentoStore.documentos(); track documento.id) {
+          <tr>
+            <td>{{ documento.id }}</td>
+            <td>{{ documento.openID }}</td>
+            <td>{{ documento.token }}</td>
+            <td>{{ documento.name }}</td>
+            <td>
+              <span
+                class="badge"
+                [class.bg-warning]="documento.status === 'pending'"
+                [class.bg-success]="documento.status === 'completed'"
+                [class.bg-danger]="documento.status === 'cancelled'"
+                [class.bg-info]="documento.status === 'in_progress'"
+              >
+                {{ documento.status }}
+              </span>
+            </td>
+            <td>{{ documento.created_at | date:'dd/MM/yyyy HH:mm' }}</td>
+            <td>
+              <div class="signers-list">
+                @for (signer of documento.signers; track signer.id) {
+                  <div class="signer-item mb-1">
+                    <small class="fw-bold">{{ signer.name }}</small><br>
+                    <small class="text-muted">{{ signer.email }}</small>
+                    <span
+                      class="badge badge-sm ms-1"
+                      [class.bg-warning]="signer.status === 'pending'"
+                      [class.bg-success]="signer.status === 'completed'"
+                      [class.bg-danger]="signer.status === 'cancelled'"
+                    >
+                      {{ signer.status }}
+                    </span>
+                  </div>
+                }
+              </div>
+            </td>
+            <td>
+              <button class="btn btn-info btn-sm me-2" (click)="onEditDocumento(documento)">
+                Editar
+              </button>
+              <button class="btn btn-danger btn-sm" (click)="onDeleteDocumento(documento)">
+                Apagar
+              </button>
+            </td>
+          </tr>
+          }
+        }
+      </tbody>
+    </table>
+  }
+</div>
