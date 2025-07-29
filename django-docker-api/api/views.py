@@ -1,221 +1,194 @@
-from rest_framework.decorators import api_view, parser_classes
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
+from django.db import transaction
+
 from .models import Documento, Signatario
-from .serializers import DocumentoSerializer, DocumentoWithSignersSerializer, DocumentoUpdateSerializer, SignatarioSerializer
-from decouple import config
+from .serializers import (
+    DocumentoSerializer, 
+    DocumentoWithSignersSerializer, 
+    DocumentoUpdateSerializer, 
+    SignatarioSerializer
+)
+from .services import ZapSignService, DocumentoService, ZapSignAPIException
+from .mixins import BaseViewMixin, APIResponseHandler
+from .constants import HTTP_METHODS, MESSAGES, ERROR_CODES
 
-import json
-import requests
+import logging
 
-# Configurações da API ZapSign
-ZAPSIGN_API_TOKEN = config('ZAPSIGN_API_TOKEN')
-ZAPSIGN_API_BASE_URL = config('ZAPSIGN_API_BASE_URL')
-
-def get_zapsign_headers():
-    """Retorna os headers necessários para autenticação na API ZapSign"""
-    return {
-        'Authorization': f'Bearer {ZAPSIGN_API_TOKEN}'
-    }
+logger = logging.getLogger(__name__)
 
 
-@api_view(['GET'])
+@api_view([HTTP_METHODS['GET']])
 def get_documentos(request):
-    if request.method != 'GET':
-        return Response(status=status.HTTP_405_METHOD_NOT_ALLOWED)
+    """Retorna lista de todos os documentos"""
+    method_error = BaseViewMixin.validate_method(request, HTTP_METHODS['GET'])
+    if method_error:
+        return method_error
 
     try:
         documentos = Documento.objects.all()
-        serializer = DocumentoWithSignersSerializer(documentos, many=True)
-
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return BaseViewMixin.serialize_and_respond(
+            documentos, 
+            DocumentoWithSignersSerializer, 
+            many=True
+        )
     except Exception as e:
-        print("Error fetching documentos:", str(e))
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return BaseViewMixin.handle_exception(e, "busca de documentos")
 
 
-@api_view(['GET'])
+@api_view([HTTP_METHODS['GET']])
 def get_documento(request, pk):
-    if request.method != 'GET':
-        return Response(status=status.HTTP_405_METHOD_NOT_ALLOWED)
+    """Retorna um documento específico por ID"""
+    method_error = BaseViewMixin.validate_method(request, HTTP_METHODS['GET'])
+    if method_error:
+        return method_error
+
+    documento, error_response = BaseViewMixin.get_object_or_404_response(Documento, pk)
+    if error_response:
+        return error_response
 
     try:
-        documento = Documento.objects.get(pk=pk)
-    except Documento.DoesNotExist:
-        return Response({'error': 'Documento não encontrado'}, status=status.HTTP_404_NOT_FOUND)
-
-    try:
-        serializer = DocumentoWithSignersSerializer(documento)
-
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return BaseViewMixin.serialize_and_respond(documento, DocumentoWithSignersSerializer)
     except Exception as e:
-        print("Error fetching documento:", str(e))
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return BaseViewMixin.handle_exception(e, "busca de documento")
 
 
-@api_view(['POST'])
+@api_view([HTTP_METHODS['POST']])
 def create_documento(request):
-    if request.method != 'POST':
-        return Response(status=status.HTTP_405_METHOD_NOT_ALLOWED)
+    """Cria um novo documento"""
+    method_error = BaseViewMixin.validate_method(request, HTTP_METHODS['POST'])
+    if method_error:
+        return method_error
+
+    # Validar campos obrigatórios
+    required_fields = ['name', 'url_documento', 'nome_signatario', 'email_signatario']
+    validation_error = BaseViewMixin.validate_required_fields(request.data, required_fields)
+    if validation_error:
+        return validation_error
 
     try:
-        data = request.data
-
-        headers = get_zapsign_headers()
-
-        response = requests.post(
-            f'{ZAPSIGN_API_BASE_URL}/docs/',
-            json={
-                "name": data.get("name"),
-                "url_pdf": data.get("url_documento"),
-                "signers": [
-                    {
-                        "name": data.get("nome_signatario"),
-                        "email": data.get("email_signatario"),
-                    }
-                ],
-            },
-            headers=headers
-        )
-        if response.status_code != 200:
-            print("Erro na API externa:", response.status_code, response.text)
-            return Response({'error': 'Erro na API externa'}, status=status.HTTP_400_BAD_REQUEST)
-
-        api_result = response.json()
-
-        data['openID'] = api_result.get('open_id', None)
-        data['token'] = api_result.get('token', None)
-        data['status'] = api_result.get('status', 'pending')
-        data['created_by'] = api_result['created_by'].get('email', 'system')
-        data['company_id'] = data.get('company_id', 1)
-        data['external_id'] = api_result.get('external_id', 'vazio')
-
-        serializer = DocumentoSerializer(data=data)
-
-        if serializer.is_valid():
+        with transaction.atomic():
+            # Usar services para interação com API externa
+            zapsign_service = ZapSignService()
+            documento_service = DocumentoService()
+            
+            # Criar documento na API ZapSign
+            api_result = zapsign_service.create_document(request.data)
+            
+            # Preparar dados para salvar no banco
+            document_data = documento_service.prepare_document_data(api_result, request.data)
+            
+            # Salvar documento no banco
+            serializer = DocumentoSerializer(data=document_data)
+            if not serializer.is_valid():
+                logger.error(f"Erro de validação do documento: {serializer.errors}")
+                return APIResponseHandler.validation_error_response(serializer)
+            
             documento_criado = serializer.save()
+            
+            # Preparar e salvar signatário
+            signer_data = documento_service.prepare_signer_data(
+                api_result, request.data, documento_criado.id
+            )
+            
+            signatario_serializer = SignatarioSerializer(data=signer_data)
+            if signatario_serializer.is_valid():
+                signatario_serializer.save()
+                logger.info(f"Signatário cadastrado: {request.data.get('nome_signatario')}")
+            else:
+                logger.error(f"Erro ao cadastrar signatário: {signatario_serializer.errors}")
 
-            try:
-                # headers = {
-                #     'Authorization': 'Bearer eb3905e2-0fe4-429d-b4fb-266964f52ee55b401a88-b6ef-47f5-8d66-27a4a8678a2b'
-                # }
+            return APIResponseHandler.success_response(
+                data=serializer.data,
+                message=MESSAGES['DOCUMENT_CREATED'],
+                status_code=status.HTTP_201_CREATED
+            )
 
-                # response = requests.post(
-                #     f'https://sandbox.api.zapsign.com.br/api/v1/docs/{data['token']}/add-signer/',
-                #     json={
-                #         "name": data.get("name_signatario"),
-                #         "email": data.get("email_signatario"),
-                #     },
-                #     headers=headers
-                # )
-
-                # if response.status_code != 200:
-                #     print("Erro ao adicionar signatário:", response.status_code, response.text)
-                #     return Response({'error': 'Erro ao adicionar signatário'}, status=status.HTTP_400_BAD_REQUEST)
-
-                signatario_data = response.json()
-
-                signatario_data['token'] = data['token']
-                signatario_data['status'] = data['status']
-                signatario_data['name'] = data.get("nome_signatario")
-                signatario_data['email'] = data.get("email_signatario")
-                # Use the correct field name and ensure it's not blank
-                signatario_data['external_id'] = api_result.get(
-                    'external_id', 'vazio')
-                signatario_data['documentID'] = documento_criado.id
-
-                signatario_serializer = SignatarioSerializer(
-                    data=signatario_data)
-
-                if signatario_serializer.is_valid():
-                    signatario_serializer.save()
-                    print(
-                        f"Signatário cadastrado com sucesso: {data.get('nome_signatario')}")
-                else:
-                    print("Erro ao cadastrar signatário:",
-                          signatario_serializer.errors)
-
-            except Exception as e:
-                print("Erro ao processar signatário:", str(e))
-
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-        print("Erro de validação:", serializer.errors)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    except Exception as e:
-        print("Error fetching documentos:", str(e))
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(['PUT'])
-def update_documento(request, pk):
-    if request.method != 'PUT':
-        return Response(status=status.HTTP_405_METHOD_NOT_ALLOWED)
-
-    try:
-        documento = Documento.objects.get(pk=pk)
-    except Documento.DoesNotExist:
-        return Response({'error': 'Documento não encontrado'}, status=status.HTTP_404_NOT_FOUND)
-
-    try:
-        data = request.data
-
-        if 'name' not in data:
-            return Response({'error': 'Campo name é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
-
-        headers = get_zapsign_headers()
-
-        response = requests.put(
-            f'{ZAPSIGN_API_BASE_URL}/docs/{documento.token}/',
-            json={
-                "name": data.get("name"),
-            },
-            headers=headers
+    except ZapSignAPIException as e:
+        logger.error(f"Erro na API ZapSign: {e.message}")
+        return APIResponseHandler.error_response(
+            error_message=e.message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code=ERROR_CODES['ZAPSIGN_API_ERROR']
         )
-        if response.status_code != 200:
-            print("Erro na API externa:", response.status_code, response.text)
-            return Response({'error': 'Erro na API externa'}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return BaseViewMixin.handle_exception(e, "criação de documento")
 
-        documento.name = data.get("name")
+
+@api_view([HTTP_METHODS['PUT']])
+def update_documento(request, pk):
+    """Atualiza um documento existente"""
+    method_error = BaseViewMixin.validate_method(request, HTTP_METHODS['PUT'])
+    if method_error:
+        return method_error
+
+    documento, error_response = BaseViewMixin.get_object_or_404_response(Documento, pk)
+    if error_response:
+        return error_response
+
+    # Validar campos obrigatórios
+    validation_error = BaseViewMixin.validate_required_fields(request.data, ['name'])
+    if validation_error:
+        return validation_error
+
+    try:
+        # Usar service para interação com API externa
+        zapsign_service = ZapSignService()
+        
+        # Atualizar documento na API ZapSign
+        zapsign_service.update_document(documento.token, request.data)
+        
+        # Atualizar documento no banco local
+        documento.name = request.data.get("name")
         documento.save()
 
-        serializer = DocumentoUpdateSerializer(documento)
-
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    except Exception as e:
-        print("Error updating documento:", str(e))
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(['DELETE'])
-def delete_documento(request, pk):
-    if request.method != 'DELETE':
-        return Response(status=status.HTTP_405_METHOD_NOT_ALLOWED)
-
-    try:
-        documento = Documento.objects.get(pk=pk)
-    except Documento.DoesNotExist:
-        return Response({'error': 'Documento não encontrado'}, status=status.HTTP_404_NOT_FOUND)
-
-    try:
-
-        data = request.data
-
-        headers = get_zapsign_headers()
-
-        response = requests.delete(
-            f'{ZAPSIGN_API_BASE_URL}/docs/{documento.token}/',
-            headers=headers
+        return BaseViewMixin.serialize_and_respond(
+            documento, 
+            DocumentoUpdateSerializer,
+            status_code=status.HTTP_200_OK
         )
-        if response.status_code != 200:
-            print("Erro na API externa:", response.status_code, response.text)
-            return Response({'error': 'Erro na API externa'}, status=status.HTTP_400_BAD_REQUEST)
 
+    except ZapSignAPIException as e:
+        logger.error(f"Erro na API ZapSign: {e.message}")
+        return APIResponseHandler.error_response(
+            error_message=e.message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code=ERROR_CODES['ZAPSIGN_API_ERROR']
+        )
+    except Exception as e:
+        return BaseViewMixin.handle_exception(e, "atualização de documento")
+
+
+@api_view([HTTP_METHODS['DELETE']])
+def delete_documento(request, pk):
+    """Deleta um documento existente"""
+    method_error = BaseViewMixin.validate_method(request, HTTP_METHODS['DELETE'])
+    if method_error:
+        return method_error
+
+    documento, error_response = BaseViewMixin.get_object_or_404_response(Documento, pk)
+    if error_response:
+        return error_response
+
+    try:
+        # Usar service para interação com API externa
+        zapsign_service = ZapSignService()
+        
+        # Deletar documento na API ZapSign
+        zapsign_service.delete_document(documento.token)
+        
+        # Deletar documento do banco local
         documento.delete()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    except ZapSignAPIException as e:
+        logger.error(f"Erro na API ZapSign: {e.message}")
+        return APIResponseHandler.error_response(
+            error_message=e.message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code=ERROR_CODES['ZAPSIGN_API_ERROR']
+        )
     except Exception as e:
-        print("Error deleting documento:", str(e))
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return BaseViewMixin.handle_exception(e, "exclusão de documento")

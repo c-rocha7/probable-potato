@@ -5,9 +5,8 @@ import {
   ReactiveFormsModule,
   Validators,
 } from '@angular/forms';
-import { DocumentoStore } from '../../store/documento-store';
 import { Documento } from '../../types/documento';
-import { ToastrService } from 'ngx-toastr';
+import { DocumentoFormService } from '../../services/documento-form.service';
 
 @Component({
   selector: 'app-documento-form',
@@ -23,8 +22,7 @@ export class DocumentoFormComponent implements OnChanges {
 
   formBuilder = inject(FormBuilder);
   documentoForm!: FormGroup;
-  documentoStore = inject(DocumentoStore);
-  toaster = inject(ToastrService);
+  documentoFormService = inject(DocumentoFormService);
 
   constructor() {
     this.documentoForm = this.formBuilder.group({
@@ -50,25 +48,15 @@ export class DocumentoFormComponent implements OnChanges {
   }
 
   save() {
-    if (this.documentoForm.invalid) {
-      this.toaster.error('Preencha os campos.');
-      return;
+    const saved = this.documentoFormService.saveDocumento(this.documentoForm, this.selectedDocumento);
+    if (saved) {
+      this.clearForm();
+      this.documentoSaved.emit();
     }
-
-    let formValues = this.documentoForm.value;
-    if (this.selectedDocumento) {
-      formValues.id = this.selectedDocumento.id;
-      this.documentoStore.updateDocumento(formValues);
-    } else {
-      this.documentoStore.addDocumento(formValues);
-    }
-
-    this.clearForm();
-    this.documentoSaved.emit();
   }
 
   clearForm() {
-    this.documentoForm.reset();
+    this.documentoFormService.clearForm(this.documentoForm);
     this.formCleared.emit();
   }
 }
